@@ -153,7 +153,10 @@ def get_vectorstore():
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-
+@app.head("/")
+async def head_root():
+    return {}  # Return an empty response for HEAD requests
+    
 # Handle user queries with language support
 @app.post("/query")
 async def handle_query(query: str = Form(...)):
