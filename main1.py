@@ -21,7 +21,11 @@ os.environ["LANGCHAIN_TRACING_V2"] = "true"
 async def lifespan(app: FastAPI):
     # Startup: load vectorstore
     print("Loading FAISS Vector Store...")
-    get_vectorstore()
+    try:
+        get_vectorstore()
+    except Exception as e:
+        print(f"Error loading vector store: {str(e)}")
+        print("Application will continue without vector store")
     yield
     # Shutdown: cleanup could go here if needed
 
@@ -30,12 +34,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan, title="Multilingual Legal Advisor API")
 
 # Initialize Jinja2 templates
-templates = Jinja2Templates(directory="templates")
+templates_dir = os.path.join(os.getcwd(), "templates")
+if not os.path.exists(templates_dir):
+    os.makedirs(templates_dir)
+    print(f"Created templates directory at {templates_dir}")
+templates = Jinja2Templates(directory=templates_dir)
 
 # Load environment variables or configurations
 txt_file = "./motor.txt"
 faiss_index_path = "faiss_index"
 embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+
+# Get API key from environment variable with fallback
+api_key = os.environ.get("GOOGLE_API_KEY", "AIzaSyAvkXnso2NhNoUIu5Hlu9H3l8HLdI2N5jc")
 
 
 # Get embeddings model (cached)
@@ -49,7 +60,6 @@ def get_embeddings():
 @lru_cache(maxsize=1)
 def get_gemini_model():
     """Create and cache the Gemini model to avoid reinitializing"""
-    api_key = "AIzaSyAvkXnso2NhNoUIu5Hlu9H3l8HLdI2N5jc"
     genai.configure(api_key=api_key)
     return genai.GenerativeModel("gemini-2.0-flash")
 
@@ -99,20 +109,37 @@ def translate_text(text: str, target_language: str) -> str:
 
 # Load and split text
 def load_and_split_text(file_path):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        text = file.read()
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            text = file.read()
 
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500, chunk_overlap=100
-    )
-    documents = [Document(page_content=chunk) for chunk in text_splitter.split_text(text)]
-    return documents
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500, chunk_overlap=100
+        )
+        documents = [Document(page_content=chunk) for chunk in text_splitter.split_text(text)]
+        return documents
+    except FileNotFoundError:
+        print(f"File not found: {file_path}, creating sample file")
+        # Create a sample file if it doesn't exist
+        with open(file_path, 'w', encoding='utf-8') as file:
+            file.write("This is a sample text for the motor vehicle law assistance. "
+                    "The actual content was not found, so this placeholder is being used.")
+        # Try again with the new file
+        return load_and_split_text(file_path)
+    except Exception as e:
+        print(f"Error loading text: {str(e)}")
+        # Return a minimal document if we can't load the file
+        return [Document(page_content="Error loading document content. Please try again later.")]
 
 
 # Create FAISS vector store
 def create_faiss_vectorstore(documents, faiss_index_path):
     embeddings = get_embeddings()
     vectorstore = FAISS.from_documents(documents, embeddings)
+    
+    # Make sure the directory exists for saving
+    os.makedirs(os.path.dirname(faiss_index_path), exist_ok=True)
+    
     vectorstore.save_local(faiss_index_path)
     return vectorstore
 
@@ -150,6 +177,14 @@ def get_vectorstore():
     return vectorstore
 
 
+# Health check endpoint
+@app.get("/health")
+@app.head("/health")
+async def health_check():
+    """Health check endpoint for monitoring"""
+    return {"status": "ok", "service": "Legal Advisor API"}
+
+
 # Serve the HTML file
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -175,13 +210,18 @@ async def handle_query(query: str = Form(...)):
             english_query = query
 
         # Get the vectorstore
-        vs = get_vectorstore()
+        try:
+            vs = get_vectorstore()
+            
+            # Perform similarity search
+            docs = vs.similarity_search(english_query, k=4)  # Limit to top 4 relevant documents
 
-        # Perform similarity search
-        docs = vs.similarity_search(english_query, k=4)  # Limit to top 4 relevant documents
-
-        # Prepare context from retrieved documents
-        context = " ".join(doc.page_content for doc in docs)
+            # Prepare context from retrieved documents
+            context = " ".join(doc.page_content for doc in docs)
+        except Exception as e:
+            print(f"Vector store error: {str(e)}")
+            # Fallback to a generic response if vector store fails
+            context = "I have limited information about motor vehicle laws at the moment."
 
         # Generate response using Gemini API
         gemini_model = get_gemini_model()
@@ -209,6 +249,7 @@ Don't write phrases like 'based on the information available' or 'based on your 
 
     except Exception as e:
         error_message = f"An error occurred while processing your query: {str(e)}"
+        print(f"Query processing error: {str(e)}")
 
         # Try to translate error message if language was detected
         try:
@@ -224,5 +265,6 @@ Don't write phrases like 'based on the information available' or 'based on your 
 # Run the FastAPI app
 if __name__ == "__main__":
     import uvicorn
-    # Use reload mode but only one worker for simpler startup
-    uvicorn.run("main1:app", host="0.0.0.0", port=8001, reload=True)
+    # Use the PORT environment variable provided by Render
+    port = int(os.environ.get("PORT", 8001))
+    uvicorn.run("main1:app", host="0.0.0.0", port=port, timeout_keep_alive=120)
