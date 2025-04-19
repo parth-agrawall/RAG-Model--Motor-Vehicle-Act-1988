@@ -13,6 +13,8 @@ from functools import lru_cache
 from contextlib import asynccontextmanager
 import langdetect  # Added for language detection
 
+os.environ["LANGCHAIN_API_KEY"] = "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"
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
 # Define lifespan context manager for startup/shutdown events
 @asynccontextmanager
