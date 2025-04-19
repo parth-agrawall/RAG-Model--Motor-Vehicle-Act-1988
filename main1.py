@@ -219,6 +219,5 @@ Don't write phrases like 'based on the information available' or 'based on your 
 # Run the FastAPI app
 if __name__ == "__main__":
     import uvicorn
-
     # Use reload mode but only one worker for simpler startup
     uvicorn.run("main1:app", host="0.0.0.0", port=8001, reload=True)
