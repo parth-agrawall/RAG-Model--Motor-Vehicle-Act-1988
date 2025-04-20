@@ -1,5 +1,4 @@
 import os
-import ssl
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -57,18 +56,15 @@ templates = Jinja2Templates(directory="templates")
 @lru_cache(maxsize=1)
 def get_mongo_client():
     """Create and cache the MongoDB client to avoid reinitializing"""
-    # Create a custom SSL context
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    
+    # Simplified connection with proper params
     return MongoClient(
         MONGODB_URI,
         tls=True,
         tlsAllowInvalidCertificates=True,
         tlsAllowInvalidHostnames=True,
-        ssl_cert_reqs=ssl.CERT_NONE,
-        connect=False  # Prevent immediate connection
+        serverSelectionTimeoutMS=60000,  # Increase timeout to 60 seconds
+        connectTimeoutMS=60000,  # Increase connection timeout
+        socketTimeoutMS=60000  # Increase socket timeout
     )
 
 # Get embeddings model (cached)
