@@ -15,9 +15,27 @@ import langdetect  # Added for language detection
 from pymongo import MongoClient
 from langchain_mongodb import MongoDBAtlasVectorSearch
 
-# Import configuration
-from config import MONGODB_URI, DB_NAME, COLLECTION_NAME, GEMINI_API_KEY, EMBEDDING_MODEL, TEXT_FILE_PATH, DEBUG
+# Load environment variables if dotenv is available (for local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not available, continue without it
 
+# Configuration from environment variables
+MONGODB_URI = os.environ.get("MONGODB_URI")
+if not MONGODB_URI:
+    raise ValueError("MONGODB_URI environment variable is not set")
+
+DB_NAME = os.environ.get("DB_NAME", "legal_advisor")
+COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "motor_vector_store")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable is not set")
+    
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+TEXT_FILE_PATH = os.environ.get("TEXT_FILE_PATH", "./motor.txt")
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 
 # Define lifespan context manager for startup/shutdown events
 @asynccontextmanager
@@ -28,13 +46,11 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown: cleanup could go here if needed
 
-
 # Initialize FastAPI app with lifespan
 app = FastAPI(lifespan=lifespan, title="Multilingual Legal Advisor API", debug=DEBUG)
 
 # Initialize Jinja2 templates
 templates = Jinja2Templates(directory="templates")
-
 
 # Get MongoDB client (cached)
 @lru_cache(maxsize=1)
@@ -42,13 +58,11 @@ def get_mongo_client():
     """Create and cache the MongoDB client to avoid reinitializing"""
     return MongoClient(MONGODB_URI, tlsAllowInvalidCertificates=True)
 
-
 # Get embeddings model (cached)
 @lru_cache(maxsize=1)
 def get_embeddings():
     """Create and cache the embeddings model to avoid reinitializing"""
     return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-
 
 # Initialize Gemini API (cached)
 @lru_cache(maxsize=1)
@@ -56,7 +70,6 @@ def get_gemini_model():
     """Create and cache the Gemini model to avoid reinitializing"""
     genai.configure(api_key=GEMINI_API_KEY)
     return genai.GenerativeModel("gemini-2.0-flash")
-
 
 # Detect language of text
 def detect_language(text: str) -> str:
@@ -69,7 +82,6 @@ def detect_language(text: str) -> str:
     except:
         # Default to English if detection fails
         return "en"
-
 
 # Translate text using Gemini model
 def translate_text(text: str, target_language: str) -> str:
@@ -100,7 +112,6 @@ def translate_text(text: str, target_language: str) -> str:
     response = gemini_model.generate_content(translation_prompt)
     return response.text.strip()
 
-
 # Load and split text
 def load_and_split_text(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -112,19 +123,18 @@ def load_and_split_text(file_path):
     documents = [Document(page_content=chunk) for chunk in text_splitter.split_text(text)]
     return documents
 
-
 # Create MongoDB vector store
 def create_mongodb_vectorstore(documents):
     client = get_mongo_client()
     embeddings = get_embeddings()
-
+    
     # Create collection with vector search index if it doesn't exist
     db = client[DB_NAME]
-
+    
     # Check if collection exists and drop it if needed for fresh start
     if COLLECTION_NAME in db.list_collection_names():
         db[COLLECTION_NAME].drop()
-
+    
     # Create vector store
     vectorstore = MongoDBAtlasVectorSearch.from_documents(
         documents=documents,
@@ -132,35 +142,32 @@ def create_mongodb_vectorstore(documents):
         collection=db[COLLECTION_NAME],
         index_name="vector_index",
     )
-
+    
     return vectorstore
-
 
 # Check if MongoDB collection exists and has documents
 def mongodb_collection_exists():
     client = get_mongo_client()
     db = client[DB_NAME]
-
+    
     if COLLECTION_NAME not in db.list_collection_names():
         return False
-
+    
     # Check if collection has documents
     count = db[COLLECTION_NAME].count_documents({})
     return count > 0
-
 
 # Get MongoDB vector store
 def get_mongodb_vectorstore():
     client = get_mongo_client()
     db = client[DB_NAME]
     embeddings = get_embeddings()
-
+    
     return MongoDBAtlasVectorSearch(
         collection=db[COLLECTION_NAME],
         embedding=embeddings,
         index_name="vector_index",
     )
-
 
 # Load or create MongoDB vector store
 def load_or_create_vectorstore(txt_file):
@@ -173,10 +180,8 @@ def load_or_create_vectorstore(txt_file):
         vectorstore = get_mongodb_vectorstore()
     return vectorstore
 
-
 # Initialize vector store as a global variable
 vectorstore = None
-
 
 def get_vectorstore():
     global vectorstore
@@ -184,12 +189,10 @@ def get_vectorstore():
         vectorstore = load_or_create_vectorstore(TEXT_FILE_PATH)
     return vectorstore
 
-
 # Serve the HTML file
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
-
 
 # Handle user queries with language support
 @app.post("/query")
@@ -252,7 +255,6 @@ Don't write phrases like 'based on the information available' or 'based on your 
 
         return JSONResponse(content={"result": error_message, "sources": []})
 
-
 # Add a healthcheck endpoint for monitoring
 @app.get("/health")
 async def health_check():
@@ -260,10 +262,10 @@ async def health_check():
         # Check if we can connect to MongoDB
         client = get_mongo_client()
         client.admin.command('ping')
-
+        
         # Check if we can get the vectorstore
         vs = get_vectorstore()
-
+        
         return {"status": "healthy"}
     except Exception as e:
         return JSONResponse(
@@ -271,11 +273,10 @@ async def health_check():
             content={"status": "unhealthy", "error": str(e)}
         )
 
-
 # Run the FastAPI app
 if __name__ == "__main__":
     import uvicorn
-
+    
     # Use PORT environment variable if set (for Render)
     port = int(os.environ.get("PORT", 8001))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=DEBUG)
