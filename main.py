@@ -56,15 +56,15 @@ templates = Jinja2Templates(directory="templates")
 @lru_cache(maxsize=1)
 def get_mongo_client():
     """Create and cache the MongoDB client to avoid reinitializing"""
-    # Simplified connection with proper params
     return MongoClient(
         MONGODB_URI,
+        connect=False,  # Defer connection until first operation
+        serverSelectionTimeoutMS=60000,
+        connectTimeoutMS=60000,
+        socketTimeoutMS=60000,
         tls=True,
         tlsAllowInvalidCertificates=True,
-        tlsAllowInvalidHostnames=True,
-        serverSelectionTimeoutMS=60000,  # Increase timeout to 60 seconds
-        connectTimeoutMS=60000,  # Increase connection timeout
-        socketTimeoutMS=60000  # Increase socket timeout
+        tlsAllowInvalidHostnames=True
     )
 
 # Get embeddings model (cached)
